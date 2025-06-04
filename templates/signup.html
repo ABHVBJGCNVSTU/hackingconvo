@@ -74,7 +74,7 @@
             color: #000;
             box-shadow: 0 0 15px #0f0;
         }
-        .btn:active {
+        .btn:active, .btn-loading {
             animation: pulse 0.5s;
         }
         @keyframes pulse {
@@ -82,9 +82,15 @@
             50% { transform: scale(1.1); }
             100% { transform: scale(1); }
         }
-        .error {
-            color: #f00;
-            margin-bottom: 10px;
+        .error-message {
+            background: rgba(255, 0, 0, 0.2);
+            border: 1px solid #ff0000;
+            color: #ff0000;
+            padding: 10px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            text-align: center;
+            box-shadow: 0 0 10px #ff0000;
         }
         .footer {
             margin-top: 20px;
@@ -99,6 +105,23 @@
         a:hover {
             text-decoration: underline;
         }
+        @media (max-width: 500px) {
+            .container {
+                width: 90%;
+                padding: 15px;
+            }
+            h2 {
+                font-size: 1.2em;
+            }
+            .form-control {
+                padding: 8px;
+                font-size: 0.9em;
+            }
+            .btn {
+                padding: 8px 15px;
+                font-size: 0.9em;
+            }
+        }
     </style>
 </head>
 <body>
@@ -106,12 +129,12 @@
     <div class="container">
         <h2>CyberConvo Signup</h2>
         {% if error %}
-            <p class="error">{{ error }}</p>
+            <div class="error-message">{{ error }}</div>
         {% endif %}
-        <form action="/signup" method="post">
+        <form action="{{ url_for('signup') }}" method="post" onsubmit="this.querySelector('button').classList.add('btn-loading')">
             <input type="text" class="form-control" name="full_name" placeholder="Full Name" required>
-            <input type="email" class="form-control" name="email" placeholder="Email" required>
-            <input type="password" class="form-control" name="password" placeholder="Password" required>
+            <input type="email" class="form-control" name="email" placeholder="Email" required pattern="[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$" title="Please enter a valid email address">
+            <input type="password" class="form-control" name="password" placeholder="Password" required autocomplete="off">
             <button type="submit" class="btn">Signup</button>
         </form>
         <p><a href="{{ url_for('login') }}">Already have an account? Login</a></p>
@@ -125,11 +148,9 @@
         canvas.width = window.innerWidth;
         const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%^&*()_+-=[]{}|;:,.<>?';
         const fontSize = 14;
-        const columns = canvas.width / fontSize;
-        const drops = [];
-        for (let x = 0; x < columns; x++) {
-            drops[x] = 1;
-        }
+        const columns = Math.floor(canvas.width / fontSize);
+        const drops = Array(columns).fill(1);
+
         function draw() {
             ctx.fillStyle = 'rgba(0, 0, 0, 0.05)';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -138,12 +159,15 @@
             for (let i = 0; i < drops.length; i++) {
                 const text = chars.charAt(Math.floor(Math.random() * chars.length));
                 ctx.fillText(text, i * fontSize, drops[i] * fontSize);
-                if (drops[i] * fontSize > canvas.height && Math.random() > 0.975)
+                if (drops[i] * fontSize > canvas.height && Math.random() > 0.975) {
                     drops[i] = 0;
+                }
                 drops[i]++;
             }
         }
-        setInterval(draw, 33);
+
+        // Reduced frame rate for better performance on Render
+        setInterval(draw, 100); // 10 FPS instead of 30 FPS
     </script>
 </body>
 </html>

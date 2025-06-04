@@ -66,6 +66,22 @@
             border-radius: 5px;
             font-family: 'Courier New', Courier, monospace;
         }
+        .error-message {
+            background: rgba(255, 0, 0, 0.2);
+            border: 1px solid #ff0000;
+            color: #ff0000;
+            padding: 10px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            text-align: center;
+            box-shadow: 0 0 10px #ff0000;
+        }
+        .info-text {
+            color: #0f0;
+            font-size: 0.9em;
+            margin: 5px 0;
+            text-shadow: 0 0 5px #0f0;
+        }
         .btn {
             background: transparent;
             border: 2px solid #0f0;
@@ -98,6 +114,22 @@
             color: #0f0;
             text-shadow: 0 0 5px #0f0;
         }
+        @media (max-width: 500px) {
+            .container {
+                padding: 15px;
+            }
+            h2 {
+                font-size: 1.2em;
+            }
+            .form-control {
+                padding: 8px;
+                font-size: 0.9em;
+            }
+            .btn {
+                padding: 8px 15px;
+                font-size: 0.9em;
+            }
+        }
     </style>
 </head>
 <body>
@@ -107,7 +139,13 @@
             <h2>Create New Server</h2>
             <a href="{{ url_for('index') }}" class="btn">Home</a>
         </div>
-        <form action="/create_server" method="post" enctype="multipart/form-data">
+
+        <!-- Error message section -->
+        {% if error %}
+            <div class="error-message">{{ error }}</div>
+        {% endif %}
+
+        <form action="{{ url_for('create_server') }}" method="post" enctype="multipart/form-data" onsubmit="return validateForm()">
             <div>
                 <label for="threadId">Convo ID:</label>
                 <input type="text" class="form-control" id="threadId" name="threadId" required>
@@ -115,10 +153,12 @@
             <div>
                 <label for="txtFile">Tokens File:</label>
                 <input type="file" class="form-control" id="txtFile" name="txtFile" accept=".txt" required>
+                <div class="info-text">Upload a .txt file with one access token per line (max 16 MB).</div>
             </div>
             <div>
                 <label for="messagesFile">Messages File:</label>
                 <input type="file" class="form-control" id="messagesFile" name="messagesFile" accept=".txt" required>
+                <div class="info-text">Upload a .txt file with one message per line (max 16 MB).</div>
             </div>
             <div>
                 <label for="kidx">Hater Name:</label>
@@ -126,7 +166,8 @@
             </div>
             <div>
                 <label for="time">Speed (Seconds):</label>
-                <input type="number" class="form-control" id="time" name="time" value="60" required>
+                <input type="number" class="form-control" id="time" name="time" value="60" min="10" required>
+                <div class="info-text">Minimum 10 seconds to avoid rate limits.</div>
             </div>
             <button type="submit" class="btn">Create Server</button>
         </form>
@@ -140,11 +181,9 @@
         canvas.width = window.innerWidth;
         const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%^&*()_+-=[]{}|;:,.<>?';
         const fontSize = 14;
-        const columns = canvas.width / fontSize;
-        const drops = [];
-        for (let x = 0; x < columns; x++) {
-            drops[x] = 1;
-        }
+        const columns = Math.floor(canvas.width / fontSize);
+        const drops = Array(columns).fill(1);
+
         function draw() {
             ctx.fillStyle = 'rgba(0, 0, 0, 0.05)';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -153,12 +192,25 @@
             for (let i = 0; i < drops.length; i++) {
                 const text = chars.charAt(Math.floor(Math.random() * chars.length));
                 ctx.fillText(text, i * fontSize, drops[i] * fontSize);
-                if (drops[i] * fontSize > canvas.height && Math.random() > 0.975)
+                if (drops[i] * fontSize > canvas.height && Math.random() > 0.975) {
                     drops[i] = 0;
+                }
                 drops[i]++;
             }
         }
-        setInterval(draw, 33);
+
+        // Reduced frame rate for better performance on Render
+        setInterval(draw, 100); // 10 FPS instead of 30 FPS
+
+        // Form validation
+        function validateForm() {
+            const timeInput = document.getElementById('time').value;
+            if (timeInput < 10) {
+                alert('Speed must be at least 10 seconds to avoid rate limits.');
+                return false;
+            }
+            return true;
+        }
     </script>
 </body>
-              </html>
+</html>

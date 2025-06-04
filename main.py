@@ -95,7 +95,8 @@ def index():
         return redirect(url_for('login'))
     servers = load_servers()
     user_servers = {sid: s for sid, s in servers.items() if s['user_email'] == session['email']}
-    return render_template('index.html', servers=user_servers, email=session['email'])
+    error = request.args.get('error')  # Get error from query params if any
+    return render_template('index.html', servers=user_servers, email=session['email'], error=error)
 
 # Signup route
 @app.route('/signup', methods=['GET', 'POST'])
@@ -201,7 +202,7 @@ def start_server(server_id):
             active_servers[server_id] = {'thread': server_thread, 'running': True}
             server_thread.start()
     else:
-        return "Unauthorized", 403
+        return redirect(url_for('index', error='Unauthorized access'))
     return redirect(url_for('index'))
 
 # Stop server route
@@ -216,7 +217,7 @@ def stop_server(server_id):
             save_servers(servers)
             active_servers[server_id]['running'] = False
     else:
-        return "Unauthorized", 403
+        return redirect(url_for('index', error='Unauthorized access'))
     return redirect(url_for('index'))
 
 # View server logs route
@@ -232,8 +233,10 @@ def view_logs(server_id):
         if os.path.exists(log_file_path):
             with open(log_file_path, "r") as log_file:
                 logs = log_file.readlines()
-        return render_template('view_logs.html', server_id=server_id, logs=logs)
-    return "Unauthorized", 403
+        error = request.args.get('error')  # Get error from query params if any
+        return render_template('view_logs.html', server_id=server_id, logs=logs, error=error)
+    else:
+        return redirect(url_for('index', error='Unauthorized access'))
 
 # Delete server route
 @app.route('/delete_server/<server_id>')
@@ -255,7 +258,7 @@ def delete_server(server_id):
         if os.path.exists(folder_name):
             shutil.rmtree(folder_name)
     else:
-        return "Unauthorized", 403
+        return redirect(url_for('index', error='Unauthorized access'))
     return redirect(url_for('index'))
 
 # Restart running servers on app startup
@@ -277,4 +280,4 @@ def restart_running_servers():
 if __name__ == '__main__':
     restart_running_servers()
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=port, debug=False)  # Disable debug for production

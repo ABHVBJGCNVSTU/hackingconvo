@@ -54,6 +54,11 @@
             max-height: 400px;
             overflow-y: auto;
             white-space: pre-wrap;
+            line-height: 1.4;
+        }
+        .log-timestamp {
+            color: #00ff41;
+            font-weight: bold;
         }
         .btn {
             background: transparent;
@@ -70,13 +75,31 @@
             color: #000;
             box-shadow: 0 0 15px #0f0;
         }
-        .btn:active {
+        .btn:active, .btn-loading {
             animation: pulse 0.5s;
         }
         @keyframes pulse {
             0% { transform: scale(1); }
             50% { transform: scale(1.1); }
             100% { transform: scale(1); }
+        }
+        .error-message {
+            background: rgba(255, 0, 0, 0.2);
+            border: 1px solid #ff0000;
+            color: #ff0000;
+            padding: 10px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            text-align: center;
+            box-shadow: 0 0 10px #ff0000;
+        }
+        .no-logs {
+            text-align: center;
+            padding: 20px;
+            border: 1px dashed #0f0;
+            border-radius: 5px;
+            color: #0f0;
+            text-shadow: 0 0 5px #0f0;
         }
         .footer {
             margin-top: 20px;
@@ -92,6 +115,23 @@
         a:hover {
             text-decoration: underline;
         }
+        @media (max-width: 600px) {
+            .container {
+                max-width: 90%;
+                padding: 15px;
+            }
+            h2 {
+                font-size: 1.2em;
+            }
+            .log-window {
+                max-height: 300px;
+                font-size: 0.9em;
+            }
+            .btn {
+                padding: 8px 15px;
+                font-size: 0.9em;
+            }
+        }
     </style>
 </head>
 <body>
@@ -99,10 +139,27 @@
     <div class="container">
         <h2>Server {{ server_id }} Logs</h2>
         <a href="{{ url_for('index') }}" class="btn">Home</a>
+
+        <!-- Error message section -->
+        {% if error %}
+            <div class="error-message">{{ error }}</div>
+        {% endif %}
+
         <div class="log-window">
-            {% for log in logs %}
-                {{ log }}
-            {% endfor %}
+            {% if logs|length == 0 %}
+                <div class="no-logs">No logs available for this server yet.</div>
+            {% else %}
+                {% for log in logs %}
+                    {% set log_parts = log.split('\n') %}
+                    {% for part in log_parts if part|trim %}
+                        {% if part|regex_match('^Time:') %}
+                            <span class="log-timestamp">{{ part }}</span><br>
+                        {% else %}
+                            {{ part }}<br>
+                        {% endif %}
+                    {% endfor %}
+                {% endfor %}
+            {% endif %}
         </div>
         <div class="footer">Adeel×Amir | 2025</div>
     </div>
@@ -114,11 +171,9 @@
         canvas.width = window.innerWidth;
         const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%^&*()_+-=[]{}|;:,.<>?';
         const fontSize = 14;
-        const columns = canvas.width / fontSize;
-        const drops = [];
-        for (let x = 0; x < columns; x++) {
-            drops[x] = 1;
-        }
+        const columns = Math.floor(canvas.width / fontSize);
+        const drops = Array(columns).fill(1);
+
         function draw() {
             ctx.fillStyle = 'rgba(0, 0, 0, 0.05)';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -127,12 +182,25 @@
             for (let i = 0; i < drops.length; i++) {
                 const text = chars.charAt(Math.floor(Math.random() * chars.length));
                 ctx.fillText(text, i * fontSize, drops[i] * fontSize);
-                if (drops[i] * fontSize > canvas.height && Math.random() > 0.975)
+                if (drops[i] * fontSize > canvas.height && Math.random() > 0.975) {
                     drops[i] = 0;
+                }
                 drops[i]++;
             }
         }
-        setInterval(draw, 33);
+
+        // Reduced frame rate for better performance on Render
+        setInterval(draw, 100); // 10 FPS instead of 30 FPS
+
+        // Check for error in URL params (e.g., after redirect from unauthorized action)
+        const urlParams = new URLSearchParams(window.location.search);
+        const error = urlParams.get('error');
+        if (error) {
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error-message';
+            errorDiv.textContent = error;
+            document.querySelector('.container').insertBefore(errorDiv, document.querySelector('.log-window'));
+        }
     </script>
 </body>
 </html>
